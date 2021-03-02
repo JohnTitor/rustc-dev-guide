@@ -1,0 +1,66 @@
+name: Deploy to GitHub pages
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'rust-lang/rustc-dev-guide'
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Read .env
+        run: |
+          . ./.env
+          echo "MDBOOK_VERSION=${MDBOOK_VERSION}" >> $GITHUB_ENV
+          echo "MDBOOK_LINKCHECK_VERSION=${MDBOOK_LINKCHECK_VERSION}" >> $GITHUB_ENV
+          echo "MDBOOK_TOC_VERSION=${MDBOOK_TOC_VERSION}" >> $GITHUB_ENV
+          echo "DEPLOY_DIR=${DEPLOY_DIR}" >> $GITHUB_ENV
+
+      - name: Cache binaries
+        id: mdbook-cache
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/bin
+          key: ${{ runner.os }}-${{ env.MDBOOK_VERSION }}--${{ env.MDBOOK_LINKCHECK_VERSION }}--${{ env.MDBOOK_TOC_VERSION }}
+
+      - name: Cache linkcheck
+        uses: actions/cache@v2
+        with:
+          path: |
+            ~/book/linkcheck
+          key: ${{ runner.os }}-${{ hashFiles('./book/linkcheck') }}
+
+      - name: Install latest nightly Rust toolchain
+        if: steps.mdbook-cache.outputs.cache-hit != 'true'
+        uses: actions-rs/toolchain@v1
+        with:
+            toolchain: nightly
+            override: true
+
+      - name: Install Dependencies
+        if: steps.mdbook-cache.outputs.cache-hit != 'true'
+        run: |
+          cargo install mdbook --version ${{ env.MDBOOK_VERSION }}
+          cargo install mdbook-linkcheck --version ${{ env.MDBOOK_LINKCHECK_VERSION }}
+          cargo install mdbook-toc --version ${{ env.MDBOOK_TOC_VERSION }}
+
+      - name: Build book
+        run: mdbook build
+
+      - name: Deploy to gh-pages
+        run: |
+          touch "${{ env.DEPLOY_DIR }}/.nojekyll"
+          cp CNAME "${{ env.DEPLOY_DIR }}"
+          cd "${{ env.DEPLOY_DIR }}"
+          rm -rf .git
+          git init
+          git config user.name "Deploy from CI"
+          git config user.email ""
+          git add .
+          git commit -m "Deploy ${GITHUB_SHA} to gh-pages"
+          git push --quiet -f "https://x-token:${{ secrets.GITHUB_TOKEN }}@github.com/${GITHUB_REPOSITORY}" HEAD:gh-pages
